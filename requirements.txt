@@ -1,0 +1,2 @@
+# -*- coding: utf-8 -*-
+asyncio==3.4.3
