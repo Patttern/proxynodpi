@@ -21,7 +21,7 @@ __license__ = "LGPL"
 __version__ = "1.0.0"
 __updated__ = "2025-01-29"
 __maintainer__ = "Egor Babenko"
-__email__ = "e.babenko@lar.tech"
+__email__ = "patttern@gmail.com"
 __status__ = "Development"
 
 LOG_FILENAME = 'logs/proxy-nodpi.log'

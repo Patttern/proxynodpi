@@ -16,20 +16,19 @@ __author__ = "Egor Babenko"
 __copyright__ = "Copyright 2025"
 __credits__ = []
 __license__ = "LGPL"
-__version__ = "1.0.4"
+__version__ = "1.0.5"
 __updated__ = "2025-01-30"
 __maintainer__ = "Egor Babenko"
-__email__ = "e.babenko@lar.tech"
+__email__ = "patttern@gmail.com"
 __status__ = "Development"
 
 
 class ProxyServer():
-  def __init__(self, host:str=None, port:int=8881, debug:bool=False, show_logs:bool=True, show_stats:bool=False):
+  def __init__(self, host:str=None, port:int=8881, debug:bool=False, show_logs:bool=False, show_stats:bool=True):
     self.log = initLogger(self)
     self.blocked:list = [line.rstrip().encode() for line in open('blacklist.txt', 'r', encoding='utf-8')]
     self.tasks:list = list()
     self.bufferSize:int = 4096
-    self.maxBufferSize:int = 0
     self.host:str = host
     self.port:int = port
     self.debug:bool = debug
@@ -45,10 +44,12 @@ class ProxyServer():
     asyncio.run(self.main())
 
   async def connect(self, localReader, localWriter):
-    http_data = await localReader.read(self.bufferSize)
+    httpData = await localReader.read(self.bufferSize)
+    if self.showLogs:
+      self.log.info(f'New connection: {len(httpData)} => {httpData}')
 
     try:
-      type, target = http_data.split(b"\r\n")[0].split(b" ")[0:2]
+      type, target = httpData.split(b"\r\n")[0].split(b" ")[0:2]
       host, port = target.split(b":")
     except:
       localWriter.close()
@@ -93,8 +94,6 @@ class ProxyServer():
     try:
       head = await localReader.read(5)
       data = await localReader.read(self.bufferSize)
-      self.maxBufferSize = len(data) if len(data) > self.maxBufferSize else self.maxBufferSize
-      self.bufferSize = self.maxBufferSize if self.maxBufferSize > self.bufferSize else self.bufferSize
       if self.showLogs:
         self.log.info('=' * 100)
         self.log.info(f'Header: {head}')
@@ -150,7 +149,7 @@ class ProxyServer():
     writer.close()
     if self.showStats:
       self.log.info(f'({timeit.default_timer() - self.start}s) Conns: {self.conns}, Datas: {self.datas}, Chunks: {self.chunks}')
-      self.log.info(f'[GLOB] Max buffer size: {self.maxBufferSize} Conns: {self.globConns}, Datas: {self.globDatas}, Chunks: {self.globChunks}')
+      self.log.info(f'[GLOB] Conns: {self.globConns}, Datas: {self.globDatas}, Chunks: {self.globChunks}')
     self.conns:int = 0
     self.datas:int = 0
     self.chunks:int = 0
@@ -177,13 +176,17 @@ if __name__ == '__main__':
   # Operation with log files
   checkAndArchLog()
   """
-  # Set 127.0.0.1 if need only localhost, by default None (0.0.0.0)
-  listenerHost:str='127.0.0.1'
-  # Any free port, by default 8881
-  listenerPort:int=8881
-  # if need enable DEBUG, by default False
+  # Set '127.0.0.1' if you need to listen localhost only, otherwise any incomming connection. By default: None
+  host='127.0.0.1'
+  # Listen any free port. By default: 8881
+  port=8881
+  # Enable DEBUG if needed. By default: False
   debug=True
+  # Show logs if needed. By default: False
+  show_logs=True
+  # Show statistics if needed. By default: True
+  show_stats=False
   # Run with parameters
-  ProxyServer(listenerHost, listenerPort, debug)
+  ProxyServer(host='127.0.0.1', port=8881, debug=False, show_logs=False, show_stats=True)
   """
-  ProxyServer(show_logs=False, show_stats=True)
+  ProxyServer()
