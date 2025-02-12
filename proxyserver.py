@@ -39,6 +39,7 @@ class ProxyServer():
 
   async def connect(self, localReader, localWriter):
     httpData = await localReader.read(self.bufferSize)
+    peer = localWriter.get_extra_info('peername')
     if self.showLogs:
       self.log.info(f'New connection: {len(httpData)} => {httpData}')
 
@@ -57,7 +58,7 @@ class ProxyServer():
     await localWriter.drain()
 
     try:
-      self.log.info(f'Try connect to {host}:{port}')
+      self.log.info(f'[{peer[0]}:{peer[1]}] Try connect to {host}:{port}')
       remote_reader, remote_writer = await asyncio.open_connection(host, port)
     except:
       localWriter.close()
@@ -152,6 +153,6 @@ class ProxyServer():
 
   async def main(self):
     server = await asyncio.start_server(self.connect, self.host, self.port)
-    seraverData = server.sockets[1].getsockname()
-    self.log.info(f'ProxyNoDPI v{__version__} ({__updated__}) runned on {seraverData[0]}:{seraverData[1]}')
+    serverData = server.sockets[1].getsockname()
+    self.log.info(f'ProxyNoDPI v{__version__} ({__updated__}) runned on {serverData[0]}:{serverData[1]}')
     await server.serve_forever()

@@ -1,0 +1,201 @@
+#!/bin/bash
+
+SERVICE_NAME=proxynodpi
+SYSTEMD_SERVICE_NAME=$SERVICE_NAME.service
+SYSTEMD_DIR=/etc/systemd/system
+PYTHON_TARGET=python3.13
+VENV_DIR=venv
+LOGS_DIR=logs
+PIDS_DIR=pids
+REPO=Patttern/proxynodpi
+
+function setup {
+  echo 'Производится настройка программы'
+  exec=`which $PYTHON_TARGET`
+  currPath=`pwd`
+  if [ -z "$exec" ]; then
+    echo "Python3.13 не найден. Установите пакеты $PYTHON_TARGET и $PYTHON_TARGET-venv"
+  else
+    # Check if runned as service and deinstall it
+    installed=false
+    systemctl list-unit-files $SYSTEMD_SERVICE_NAME &>/dev/null && installed=true
+    if [ $installed = true ]; then
+      deinstall
+    fi
+    
+    # Stop standalone programm if runned 
+    stop
+
+    # Setup programm
+    if [ -d "$currPath/${VENV_DIR}" ]; then
+     rm -rf $currPath/${VENV_DIR}
+    fi
+    mkdir -p $LOGS_DIR
+    mkdir -p $PIDS_DIR
+    $exec -m venv $VENV_DIR
+    source ${VENV_DIR}/bin/activate
+    python -m pip install --upgrade pip
+    pip install --upgrade -r requirements.txt
+    deactivate
+    echo 'Настройка программы успешно произведена'
+  fi
+}
+
+function install {
+  installed=false
+  systemctl list-unit-files $SYSTEMD_SERVICE_NAME &>/dev/null && installed=true
+  if [ $installed = true ]; then
+    echo 'Программа уже установлена как сервис'
+    systemctl status $SYSTEMD_SERVICE_NAME
+  else
+    echo 'Производится установка сервиса'
+    currPath=`pwd`
+    cp $currPath/systemd/$SYSTEMD_SERVICE_NAME.sample $currPath/systemd/$SYSTEMD_SERVICE_NAME
+    sed -i "s/__user__/$USER/g" $currPath/systemd/$SYSTEMD_SERVICE_NAME
+    sed -i "s+__path__+$currPath+g" $currPath/systemd/$SYSTEMD_SERVICE_NAME
+    sudo mv $currPath/systemd/$SYSTEMD_SERVICE_NAME $SYSTEMD_DIR/$SYSTEMD_SERVICE_NAME
+    sudo systemctl enable $SYSTEMD_SERVICE_NAME
+    sudo systemctl start $SYSTEMD_SERVICE_NAME
+    systemctl status $SYSTEMD_SERVICE_NAME
+    echo 'Установка успешно завершена'
+  fi
+}
+
+function deinstall {
+  installed=true
+  systemctl list-unit-files $SYSTEMD_SERVICE_NAME &>/dev/null && installed=true || installed=false
+  if [ $installed = true ]; then
+    echo 'Производится удаление сервиса'
+    sudo systemctl stop $SYSTEMD_SERVICE_NAME
+    sudo systemctl disable $SYSTEMD_SERVICE_NAME
+    sudo rm $SYSTEMD_DIR/$SYSTEMD_SERVICE_NAME
+    echo 'Удаление успешно завершено'
+  else
+    echo 'Программа не установлена как сервис'
+  fi
+}
+
+function start {
+  currPath=`pwd`
+  source venv/bin/activate
+  nohup python main.py >/dev/null 2>&1 & echo $! > $currPath/${PIDS_DIR}/${SERVICE_NAME}.pid
+}
+
+function stop {
+  currPath=`pwd`
+  if [ -f "$currPath/${PIDS_DIR}/${SERVICE_NAME}.pid" ]; then
+    pid=`cat $currPath/${PIDS_DIR}/${SERVICE_NAME}.pid`
+    rm $currPath/${PIDS_DIR}/${SERVICE_NAME}.pid
+  else
+    pid=`ps ax | grep python | grep main.py | awk '{print $1}'`
+  fi
+  if [ ! -z "$pid" ]; then
+    sudo kill -9 $pid
+  fi
+}
+
+function restart {
+  stop
+  start
+}
+
+function check {
+  version
+  release=$(curl --silent -m 10 --connect-timeout 5 "https://api.github.com/repos/$REPO/releases/latest")
+  tag=$(echo "$release" | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
+  description=$(echo "$release" | grep '"body":' | sed -E 's/.*"([^"]+)".*/\1/')
+  exec=`which $PYTHON_TARGET`
+  currVersion=`$exec -c "print(__import__('proxyserver').__version__)"`
+  if [ "$tag" = "v$currVersion" ]; then
+  	echo 'Установлена актуальная версия программы'
+  else
+    echo "Доступна новая версия программы: $tag"
+    echo "Описание:"
+    echo -e $description | sed 's/\\r\\n/\n/g'
+    echo
+    read -p "Желаете загрузить новую версию? (Y/N): " confirm && [[ $confirm == [yY] || $confirm == [yY][eE][sS] ]] && release || exit 0
+  fi
+}
+
+function update {
+  check
+}
+
+function release {
+  target=$(echo "$release" | grep '"tarball_url":' | sed -E 's/.*"([^"]+)".*/\1/')
+  outfile=${SERVICE_NAME}_${tag}.tar.gz
+  wget -q -O $outfile $target
+  tar zxvf $outfile --strip-components 1
+  rm $outfile
+  setup
+  installed=false
+  systemctl list-unit-files $SYSTEMD_SERVICE_NAME &>/dev/null && installed=true
+  if [ $installed = true ]; then
+    sudo systemctl restart $SYSTEMD_SERVICE_NAME
+  else
+    read -p "Желаете установить программу как сервис? (Y/N): " confirm && [[ $confirm == [yY] || $confirm == [yY][eE][sS] ]] && install || exit 0
+  fi
+}
+
+function version {
+  exec=`which $PYTHON_TARGET`
+  currVersion=`$exec -c "print(__import__('proxyserver').__version__)"`
+  currDate=`$exec -c "print(__import__('proxyserver').__updated__)"`
+  echo "Proxy NoDPI v${currVersion} (${currDate})"
+  echo
+}
+
+function help {
+  version
+  echo
+  echo 'Основные команды:'
+  echo '  setup - начальная настройка программы'
+  echo '  install - установить программу как systemd сервис'
+  echo '  deinstall - удалить программу из systemd сервиса'
+  echo '  start - запсук программы'
+  echo '  stop - остановка программы'
+  echo '  restart - перезапуск программы'
+  echo '  check - проверка последней версии'
+  echo '  update - обновить программу до актуальной версии'
+  echo '  version - показать текущую версию программы'
+  echo '  help - текущая справка'
+  echo
+}
+
+case $1 in
+  setup)
+    setup
+    ;;
+  install)
+    install
+    ;;
+  deinstall)
+    deinstall
+    ;;
+  start)
+    start
+    ;;
+  stop)
+    stop
+    ;;
+  restart)
+    restart
+    ;;
+  check)
+    check
+    ;;
+  update)
+    update
+    ;;
+  version)
+    version
+    ;;
+  help)
+    help
+    ;;
+  *)
+    help
+    ;;
+esac
+
+exit 0

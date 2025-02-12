@@ -1,14 +1,4 @@
-#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-
-# --------------------------------------------------------------------
-# Log handler (Lartech)
-#
-# (C) 2022-2024 Egor Babenko, Saint-Petersburg, Russia
-# Released under GNU Lesser General Public License (LGPL)
-# email: e.babenko@lar.tech
-# --------------------------------------------------------------------
-
 
 import logging
 import logging.handlers
@@ -18,13 +8,24 @@ __author__ = "Egor Babenko"
 __copyright__ = "Copyright 2025"
 __credits__ = []
 __license__ = "LGPL"
-__version__ = "1.0.0"
-__updated__ = "2025-01-29"
+__version__ = "1.0.1"
+__updated__ = "2025-02-13"
 __maintainer__ = "Egor Babenko"
 __email__ = "patttern@gmail.com"
 __status__ = "Development"
 
+
 LOG_FILENAME = 'logs/proxy-nodpi.log'
+
+class GZipRotator:
+  def __call__(self, source, dest):
+    os.rename(source, dest)
+    f_in = open(dest, 'rb')
+    f_out = gzip.open("%s.gz" % dest, 'wb')
+    f_out.writelines(f_in)
+    f_out.close()
+    f_in.close()
+    os.remove(dest)
 
 class ContextFilter(logging.Filter):
   def filter(self, record):
@@ -48,7 +49,7 @@ def initLogger(target, specFormat=None):
   consoleHandler.setFormatter(formatter)
   logger.addHandler(consoleHandler)
 
-  fileHandler = logging.FileHandler(filename=LOG_FILENAME, mode='a')
+  fileHandler = logging.handlers.TimedRotatingFileHandler(LOG_FILENAME, 'midnight', 1, backupCount=7)
   fileHandler.setLevel(logging.DEBUG)
   fileHandler.setFormatter(formatter)
   logger.addHandler(fileHandler)
