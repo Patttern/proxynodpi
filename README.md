@@ -32,7 +32,7 @@ sudo apt install -y python3.13 python3.13-venv wget curl
 Выведется справочная информация:
 
 ```bash
-Proxy NoDPI v1.0.7 (2025-02-13)
+Proxy NoDPI v1.0.8 (2025-02-13)
 
 Основные команды:
   setup - начальная настройка программы
