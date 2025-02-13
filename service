@@ -1,63 +1,89 @@
 #!/bin/bash
 
-SERVICE_NAME=proxynodpi
-SYSTEMD_SERVICE_NAME=$SERVICE_NAME.service
-SYSTEMD_DIR=/etc/systemd/system
-PYTHON_TARGET=python3.13
-VENV_DIR=venv
-LOGS_DIR=logs
-PIDS_DIR=pids
-REPO=Patttern/proxynodpi
+ENVFILE=.proxynodpi.env
+if [ ! -f $ENVFILE ]; then
+  echo -e "PACKAGES=SERVICE_NAME=proxynodpi\nSYSTEMD_SERVICE_NAME=proxynodpi.service\nSYSTEMD_DIR=/etc/systemd/system\nPYTHON_TARGET=python3.13\nRUNNER=proxy_runner.py\nVENV_DIR=venv\nLOGS_DIR=logs\nPIDS_DIR=pids\nREPO=Patttern/proxynodpi" > $ENVFILE
+fi
+source $ENVFILE
+
+# Check for Debian-based OS
+if [ ! "$(grep -Ei 'debian|buntu|mint' /proc/version)" ]; then
+  echo 'Конфигураци программы не поддерживается на установленной системе'
+  exit 1
+fi
+
+function installpack {
+  exec=`which $PYTHON_TARGET`
+  if [ -z "$exec" ]; then
+    found=$(cat /etc/apt/sources.list.d/* | grep 'https://ppa.launchpadcontent.net/deadsnakes/ppa/')
+    if [ -z "$found" ]; then
+      sudo apt install -y software-properties-common
+      sudo add-apt-repository ppa:deadsnakes/ppa
+    fi
+  fi
+  sudo apt install -y $PYTHON_TARGET $PYTHON_TARGET-venv wget curl
+}
 
 function setup {
   echo 'Производится настройка программы'
-  exec=`which $PYTHON_TARGET`
-  currPath=`pwd`
-  if [ -z "$exec" ]; then
-    echo "Python3.13 не найден. Установите пакеты $PYTHON_TARGET и $PYTHON_TARGET-venv"
-  else
-    # Check if runned as service and deinstall it
-    installed=false
-    systemctl list-unit-files $SYSTEMD_SERVICE_NAME &>/dev/null && installed=true
-    if [ $installed = true ]; then
-      deinstall
-    fi
-    
-    # Stop standalone programm if runned 
-    stop
 
-    # Setup programm
-    if [ -d "$currPath/${VENV_DIR}" ]; then
-     rm -rf $currPath/${VENV_DIR}
-    fi
-    mkdir -p $LOGS_DIR
-    mkdir -p $PIDS_DIR
-    $exec -m venv $VENV_DIR
-    source ${VENV_DIR}/bin/activate
-    python -m pip install --upgrade pip
-    pip install --upgrade -r requirements.txt
-    deactivate
-    echo 'Настройка программы успешно произведена'
-  fi
-}
+  # Check for installed packages
+  installpack
 
-function install {
+  # Check if runned as service and deinstall it
   installed=false
   systemctl list-unit-files $SYSTEMD_SERVICE_NAME &>/dev/null && installed=true
   if [ $installed = true ]; then
-    echo 'Программа уже установлена как сервис'
-    systemctl status $SYSTEMD_SERVICE_NAME
+    deinstall
+  fi
+
+  # Stop standalone programm if runned
+  stop
+
+  # Setup programm
+  currPath=`pwd`
+  if [ -d "$currPath/${VENV_DIR}" ]; then
+   rm -rf $currPath/${VENV_DIR}
+  fi
+  mkdir -p $currPath/$LOGS_DIR
+  mkdir -p $currPath/$PIDS_DIR
+  $exec -m venv $currPath/$VENV_DIR
+  source $currPath/${VENV_DIR}/bin/activate
+  python -m pip install --upgrade pip
+  pip install --upgrade -r requirements.txt
+  deactivate
+  echo 'Настройка программы успешно произведена'
+}
+
+function installsysd {
+  echo 'Производится установка сервиса'
+  currPath=`pwd`
+  cp $currPath/systemd/$SYSTEMD_SERVICE_NAME.sample $currPath/systemd/$SYSTEMD_SERVICE_NAME
+  sed -i "s/__user__/$USER/g" $currPath/systemd/$SYSTEMD_SERVICE_NAME
+  sed -i "s+__path__+$currPath+g" $currPath/systemd/$SYSTEMD_SERVICE_NAME
+  sed -i "s/__runner__/$RUNNER/g" $currPath/systemd/$SYSTEMD_SERVICE_NAME
+  sudo mv $currPath/systemd/$SYSTEMD_SERVICE_NAME $SYSTEMD_DIR/$SYSTEMD_SERVICE_NAME
+  sudo systemctl enable $SYSTEMD_SERVICE_NAME
+  sudo systemctl start $SYSTEMD_SERVICE_NAME
+  systemctl status $SYSTEMD_SERVICE_NAME
+  echo 'Установка успешно завершена'
+}
+
+function install {
+  # Resetup program
+  currPath=`pwd`
+  if [ ! -f $currPath/${VENV_DIR}/bin/$PYTHON_TARGET ]; then
+    setup
+  fi
+
+  # Install systemd service
+  installed=false
+  systemctl list-unit-files $SYSTEMD_SERVICE_NAME &>/dev/null && installed=true
+  if [ $installed = true ]; then
+    echo 'Программа уже установлена как сервис.'
+    read -p "Желаете переустановить сервис? (Y/N): " confirm && [[ $confirm == [yY] || $confirm == [yY][eE][sS] ]] && installsysd || exit 0
   else
-    echo 'Производится установка сервиса'
-    currPath=`pwd`
-    cp $currPath/systemd/$SYSTEMD_SERVICE_NAME.sample $currPath/systemd/$SYSTEMD_SERVICE_NAME
-    sed -i "s/__user__/$USER/g" $currPath/systemd/$SYSTEMD_SERVICE_NAME
-    sed -i "s+__path__+$currPath+g" $currPath/systemd/$SYSTEMD_SERVICE_NAME
-    sudo mv $currPath/systemd/$SYSTEMD_SERVICE_NAME $SYSTEMD_DIR/$SYSTEMD_SERVICE_NAME
-    sudo systemctl enable $SYSTEMD_SERVICE_NAME
-    sudo systemctl start $SYSTEMD_SERVICE_NAME
-    systemctl status $SYSTEMD_SERVICE_NAME
-    echo 'Установка успешно завершена'
+    installsysd
   fi
 }
 
@@ -76,9 +102,14 @@ function deinstall {
 }
 
 function start {
-  currPath=`pwd`
-  source venv/bin/activate
-  nohup python main.py >/dev/null 2>&1 & echo $! > $currPath/${PIDS_DIR}/${SERVICE_NAME}.pid
+  pid=`ps ax | grep python | grep $RUNNER | awk '{print $1}'`
+  if [ -z "$pid" ]; then
+    currPath=`pwd`
+    source venv/bin/activate
+    nohup python $RUNNER >/dev/null 2>&1 & echo $! > $currPath/${PIDS_DIR}/${SERVICE_NAME}.pid
+  else
+    echo 'Программа уже запущена'
+  fi
 }
 
 function stop {
@@ -87,7 +118,7 @@ function stop {
     pid=`cat $currPath/${PIDS_DIR}/${SERVICE_NAME}.pid`
     rm $currPath/${PIDS_DIR}/${SERVICE_NAME}.pid
   else
-    pid=`ps ax | grep python | grep main.py | awk '{print $1}'`
+    pid=`ps ax | grep python | grep $RUNNER | awk '{print $1}'`
   fi
   if [ ! -z "$pid" ]; then
     sudo kill -9 $pid
@@ -99,7 +130,7 @@ function restart {
   start
 }
 
-function check {
+function update {
   version
   release=$(curl --silent -m 10 --connect-timeout 5 "https://api.github.com/repos/$REPO/releases/latest")
   tag=$(echo "$release" | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
@@ -107,7 +138,7 @@ function check {
   exec=`which $PYTHON_TARGET`
   currVersion=`$exec -c "print(__import__('proxyserver').__version__)"`
   if [ "$tag" = "v$currVersion" ]; then
-  	echo 'Установлена актуальная версия программы'
+    echo 'Установлена актуальная версия программы'
   else
     echo "Доступна новая версия программы: $tag"
     echo "Описание:"
@@ -115,10 +146,6 @@ function check {
     echo
     read -p "Желаете загрузить новую версию? (Y/N): " confirm && [[ $confirm == [yY] || $confirm == [yY][eE][sS] ]] && release || exit 0
   fi
-}
-
-function update {
-  check
 }
 
 function release {
@@ -133,7 +160,7 @@ function release {
   if [ $installed = true ]; then
     sudo systemctl restart $SYSTEMD_SERVICE_NAME
   else
-    read -p "Желаете установить программу как сервис? (Y/N): " confirm && [[ $confirm == [yY] || $confirm == [yY][eE][sS] ]] && install || exit 0
+    read -p "Желаете установить программу как сервис? (Y/N): " confirm && [[ $confirm == [yY] || $confirm == [yY][eE][sS] ]] && installsysd || exit 0
   fi
 }
 
@@ -149,13 +176,16 @@ function help {
   version
   echo
   echo 'Основные команды:'
-  echo '  setup - начальная настройка программы'
+  echo '  setup - начальная настройка программы. Можно указать целевую версию Python вторым параметром.'
+  echo '    Например, команда'
+  echo '    ./service setup 3.11'
+  echo '    произведет настройку программы на версию Python 3.11.'
+  echo '    По умолчанию, 3.13'
   echo '  install - установить программу как systemd сервис'
   echo '  deinstall - удалить программу из systemd сервиса'
-  echo '  start - запсук программы'
+  echo '  start - запуск программы'
   echo '  stop - остановка программы'
   echo '  restart - перезапуск программы'
-  echo '  check - проверка последней версии'
   echo '  update - обновить программу до актуальной версии'
   echo '  version - показать текущую версию программы'
   echo '  help - текущая справка'
@@ -164,6 +194,10 @@ function help {
 
 case $1 in
   setup)
+    arg=$2
+    targetVersion=python${arg:-'3.13'}
+    sed -i "s/^PYTHON_TARGET.*$/PYTHON_TARGET=$targetVersion/" $ENVFILE
+    source $ENVFILE
     setup
     ;;
   install)
@@ -180,9 +214,6 @@ case $1 in
     ;;
   restart)
     restart
-    ;;
-  check)
-    check
     ;;
   update)
     update

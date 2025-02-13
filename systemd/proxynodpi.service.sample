@@ -4,7 +4,7 @@ Description=Proxy NoDPI service
 [Service]
 User=__user__
 WorkingDirectory=__path__
-ExecStart=/bin/bash -c 'cd __path__ && source venv/bin/activate && python main.py'
+ExecStart=/bin/bash -c 'cd __path__ && source venv/bin/activate && python __runner__'
 Restart=always
 RestartSec=3
 
