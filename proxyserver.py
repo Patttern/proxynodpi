@@ -10,7 +10,7 @@ __author__ = "Egor Babenko"
 __copyright__ = "Copyright 2025"
 __credits__ = []
 __license__ = "LGPL"
-__version__ = "1.0.8"
+__version__ = "1.0.9"
 __updated__ = "2025-02-13"
 __maintainer__ = "Egor Babenko"
 __email__ = "patttern@gmail.com"
@@ -154,5 +154,9 @@ class ProxyServer():
   async def main(self):
     server = await asyncio.start_server(self.connect, self.host, self.port)
     serverData = server.sockets[1].getsockname()
-    self.log.info(f'ProxyNoDPI v{__version__} ({__updated__}) runned on {serverData[0]}:{serverData[1]}')
+    runStr:str = f'* ProxyNoDPI v{__version__} ({__updated__}) runned on {serverData[0]}:{serverData[1]} *'
+    self.log.info('')
+    self.log.info('*' * len(runStr))
+    self.log.info(runStr)
+    self.log.info('*' * len(runStr))
     await server.serve_forever()
