@@ -1,44 +1,17 @@
 #!/bin/bash
 
 ENVFILE=.proxynodpi.env
-if [ ! -f $ENVFILE ]; then
-  echo -e "PACKAGES=SERVICE_NAME=proxynodpi\nSYSTEMD_SERVICE_NAME=proxynodpi.service\nSYSTEMD_DIR=/etc/systemd/system\nPYTHON_TARGET=python3.13\nRUNNER=proxy_runner.py\nVENV_DIR=venv\nLOGS_DIR=logs\nPIDS_DIR=pids\nREPO=Patttern/proxynodpi" > $ENVFILE
-fi
+echo -e "PACKAGES=SERVICE_NAME=proxynodpi\nSYSTEMD_SERVICE_NAME=proxynodpi.service\nSYSTEMD_DIR=/etc/systemd/system\nPYTHON_TARGET=python3\nRUNNER=proxy_runner.py\nVENV_DIR=venv\nLOGS_DIR=logs\nPIDS_DIR=pids\nREPO=Patttern/proxynodpi" > $ENVFILE
 source $ENVFILE
-
-# Check for Debian-based OS
-if [ ! "$(grep -Ei 'debian|buntu|mint' /proc/version)" ]; then
-  echo 'Конфигураци программы не поддерживается на установленной системе'
-  exit 1
-fi
-
-function installpack {
-  exec=`which $PYTHON_TARGET`
-  if [ -z "$exec" ]; then
-    found=$(cat /etc/apt/sources.list.d/* | grep 'https://ppa.launchpadcontent.net/deadsnakes/ppa/')
-    if [ -z "$found" ]; then
-      sudo apt install -y software-properties-common
-      sudo add-apt-repository ppa:deadsnakes/ppa
-    fi
-  fi
-  sudo apt install -y $PYTHON_TARGET $PYTHON_TARGET-venv wget curl
-}
 
 function setup {
   echo 'Производится настройка программы'
 
-  # Check for installed packages
-  installpack
-
-  # Check if runned as service and deinstall it
-  installed=false
-  systemctl list-unit-files $SYSTEMD_SERVICE_NAME &>/dev/null && installed=true
-  if [ $installed = true ]; then
-    deinstall
-  fi
-
-  # Stop standalone programm if runned
+  # Stop program or service
   stop
+
+  # Deinstall if installed as systemd service
+  deinstall
 
   # Setup programm
   currPath=`pwd`
@@ -47,16 +20,32 @@ function setup {
   fi
   mkdir -p $currPath/$LOGS_DIR
   mkdir -p $currPath/$PIDS_DIR
+  exec=`which $PYTHON_TARGET`
   $exec -m venv $currPath/$VENV_DIR
   source $currPath/${VENV_DIR}/bin/activate
   python -m pip install --upgrade pip
   pip install --upgrade -r requirements.txt
   deactivate
-  echo 'Настройка программы успешно произведена'
+
+  # Check if installed
+  echo
+  if [ ! -f $currPath/${VENV_DIR}/bin/$PYTHON_TARGET ]; then
+    echo 'Настройка программы не завершена. Исправьте ошибки и повторите настройку программы.'
+  else
+    echo 'Настройка программы успешно завершена'
+  fi
+  echo
+}
+
+function deinstallsysd {
+  sudo systemctl stop $SYSTEMD_SERVICE_NAME
+  sudo systemctl disable $SYSTEMD_SERVICE_NAME
+  sudo rm $SYSTEMD_DIR/$SYSTEMD_SERVICE_NAME
 }
 
 function installsysd {
   echo 'Производится установка сервиса'
+  deinstallsysd
   currPath=`pwd`
   cp $currPath/systemd/$SYSTEMD_SERVICE_NAME.sample $currPath/systemd/$SYSTEMD_SERVICE_NAME
   sed -i "s/__user__/$USER/g" $currPath/systemd/$SYSTEMD_SERVICE_NAME
@@ -79,11 +68,12 @@ function install {
   # Install systemd service
   installed=false
   systemctl list-unit-files $SYSTEMD_SERVICE_NAME &>/dev/null && installed=true
+  echo
   if [ $installed = true ]; then
     echo 'Программа уже установлена как сервис.'
     read -p "Желаете переустановить сервис? (Y/N): " confirm && [[ $confirm == [yY] || $confirm == [yY][eE][sS] ]] && installsysd || exit 0
   else
-    installsysd
+    read -p "Желаете установить программу как сервис? (Y/N): " confirm && [[ $confirm == [yY] || $confirm == [yY][eE][sS] ]] && installsysd || exit 0
   fi
 }
 
@@ -92,36 +82,53 @@ function deinstall {
   systemctl list-unit-files $SYSTEMD_SERVICE_NAME &>/dev/null && installed=true || installed=false
   if [ $installed = true ]; then
     echo 'Производится удаление сервиса'
-    sudo systemctl stop $SYSTEMD_SERVICE_NAME
-    sudo systemctl disable $SYSTEMD_SERVICE_NAME
-    sudo rm $SYSTEMD_DIR/$SYSTEMD_SERVICE_NAME
+    deinstallsysd
     echo 'Удаление успешно завершено'
   else
     echo 'Программа не установлена как сервис'
   fi
+  echo
 }
 
 function start {
+  alreadyRunned='Программа уже запущена'
+  installed=true
+  systemctl list-unit-files $SYSTEMD_SERVICE_NAME &>/dev/null && installed=true || installed=false
   pid=`ps ax | grep python | grep $RUNNER | awk '{print $1}'`
-  if [ -z "$pid" ]; then
-    currPath=`pwd`
-    source venv/bin/activate
-    nohup python $RUNNER >/dev/null 2>&1 & echo $! > $currPath/${PIDS_DIR}/${SERVICE_NAME}.pid
+  if [ $installed = true ]; then
+    if [ -z "$pid" ]; then
+      sudo systemctl start $SYSTEMD_SERVICE_NAME
+    else
+      echo $alreadyRunned
+      systemctl status $SYSTEMD_SERVICE_NAME
+    fi
   else
-    echo 'Программа уже запущена'
+    if [ -z "$pid" ]; then
+      currPath=`pwd`
+      source venv/bin/activate
+      nohup python $RUNNER >/dev/null 2>&1 & echo $! > $currPath/${PIDS_DIR}/${SERVICE_NAME}.pid
+    else
+      echo $alreadyRunned
+    fi
   fi
 }
 
 function stop {
-  currPath=`pwd`
-  if [ -f "$currPath/${PIDS_DIR}/${SERVICE_NAME}.pid" ]; then
-    pid=`cat $currPath/${PIDS_DIR}/${SERVICE_NAME}.pid`
-    rm $currPath/${PIDS_DIR}/${SERVICE_NAME}.pid
+  installed=true
+  systemctl list-unit-files $SYSTEMD_SERVICE_NAME &>/dev/null && installed=true || installed=false
+  if [ $installed = true ]; then
+    sudo systemctl stop $SYSTEMD_SERVICE_NAME
   else
-    pid=`ps ax | grep python | grep $RUNNER | awk '{print $1}'`
-  fi
-  if [ ! -z "$pid" ]; then
-    sudo kill -9 $pid
+    currPath=`pwd`
+    if [ -f "$currPath/${PIDS_DIR}/${SERVICE_NAME}.pid" ]; then
+      pid=`cat $currPath/${PIDS_DIR}/${SERVICE_NAME}.pid`
+      rm $currPath/${PIDS_DIR}/${SERVICE_NAME}.pid
+    else
+      pid=`ps ax | grep python | grep $RUNNER | awk '{print $1}'`
+    fi
+    if [ ! -z "$pid" ]; then
+      sudo kill -9 $pid
+    fi
   fi
 }
 
@@ -154,14 +161,7 @@ function release {
   wget -q -O $outfile $target
   tar zxvf $outfile --strip-components 1
   rm $outfile
-  setup
-  installed=false
-  systemctl list-unit-files $SYSTEMD_SERVICE_NAME &>/dev/null && installed=true
-  if [ $installed = true ]; then
-    sudo systemctl restart $SYSTEMD_SERVICE_NAME
-  else
-    read -p "Желаете установить программу как сервис? (Y/N): " confirm && [[ $confirm == [yY] || $confirm == [yY][eE][sS] ]] && installsysd || exit 0
-  fi
+  ./$(basename $0) setup && ./$(basename $0) install && exit
 }
 
 function version {
@@ -174,18 +174,13 @@ function version {
 
 function help {
   version
-  echo
   echo 'Основные команды:'
-  echo '  setup - начальная настройка программы. Можно указать целевую версию Python вторым параметром.'
-  echo '    Например, команда'
-  echo '    ./service setup 3.11'
-  echo '    произведет настройку программы на версию Python 3.11.'
-  echo '    По умолчанию, 3.13'
+  echo '  setup - начальная настройка программы.'
   echo '  install - установить программу как systemd сервис'
   echo '  deinstall - удалить программу из systemd сервиса'
-  echo '  start - запуск программы'
-  echo '  stop - остановка программы'
-  echo '  restart - перезапуск программы'
+  echo '  start - запуск программы/сервиса'
+  echo '  stop - остановка программы/сервиса'
+  echo '  restart - перезапуск программы/сервиса'
   echo '  update - обновить программу до актуальной версии'
   echo '  version - показать текущую версию программы'
   echo '  help - текущая справка'
@@ -194,10 +189,6 @@ function help {
 
 case $1 in
   setup)
-    arg=$2
-    targetVersion=python${arg:-'3.13'}
-    sed -i "s/^PYTHON_TARGET.*$/PYTHON_TARGET=$targetVersion/" $ENVFILE
-    source $ENVFILE
     setup
     ;;
   install)
